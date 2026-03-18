@@ -24,35 +24,49 @@ export default function Home() {
   const [incomeDesc, setIncomeDesc] = useState("")
 
   const today = getToday()
-  const daysLeft = Math.max(0, daysBetween(today, BUDGET_CONFIG.endDate))
   const totalFixed = BUDGET_CONFIG.fixedBills.reduce((s, b) => s + b.amount, 0)
   const totalIncome = store.income.reduce((s, i) => s + i.amount, 0)
 
-  // Budget allocation: split savings across March remaining + April
+  // Budget allocation: split across March remaining + April
   const marchEnd = "2026-03-31"
   const aprilStart = "2026-04-01"
-  const daysInMarch = Math.max(0, daysBetween(today, marchEnd) + 1)
+  const daysLeftMarch = Math.max(0, daysBetween(today, marchEnd) + 1)
   const daysInApril = Math.max(0, daysBetween(aprilStart, BUDGET_CONFIG.endDate))
-  const totalDaysLeft = daysInMarch + daysInApril
+  const totalDaysLeft = daysLeftMarch + daysInApril
 
-  const savingsAfterBills = BUDGET_CONFIG.totalSavings + totalIncome - totalFixed
-  const dailyFromSavings = totalDaysLeft > 0 ? savingsAfterBills / totalDaysLeft : 0
-  const marchAllocation = Math.round(dailyFromSavings * daysInMarch)
-  const aprilAllocation = Math.round(dailyFromSavings * daysInApril)
+  // Total variable = spending cash + savings - fixed bills + any extra income
+  const totalVariable = BUDGET_CONFIG.spendingCash + BUDGET_CONFIG.totalSavings + totalIncome - totalFixed
+  const dailyRate = totalDaysLeft > 0 ? totalVariable / totalDaysLeft : 0
+  const marchBudget = Math.round(dailyRate * daysLeftMarch)
+  const aprilBudget = Math.round(dailyRate * daysInApril)
 
-  // March: spending cash + march savings allocation
-  const marchBudget = BUDGET_CONFIG.spendingCash + marchAllocation
-  // Total variable budget
-  const variableBudget = BUDGET_CONFIG.spendingCash + savingsAfterBills
+  // Current month context: are we in March or April?
+  const currentMonth = new Date().getMonth() // 2 = March, 3 = April
+  const isMarch = currentMonth === 2
+  const currentMonthBudget = isMarch ? marchBudget : aprilBudget
+  const currentMonthDays = isMarch ? daysLeftMarch : daysInApril
+  const currentMonthLabel = isMarch ? "March" : "April"
+  const otherMonthLabel = isMarch ? "April" : "March"
+  const otherMonthBudget = isMarch ? aprilBudget : marchBudget
+  const otherMonthDays = isMarch ? daysInApril : daysLeftMarch
+
+  // Spending for current month only
+  const currentMonthPrefix = isMarch ? "2026-03" : "2026-04"
+  const currentMonthExpenses = store.expenses.filter((e) => e.date.startsWith(currentMonthPrefix))
+  const currentMonthSpent = currentMonthExpenses.reduce((s, e) => s + e.amount, 0)
+  const currentMonthRemaining = currentMonthBudget - currentMonthSpent
+  const currentDailyAllowance = currentMonthDays > 0 ? currentMonthRemaining / currentMonthDays : 0
+
+  // Total across all time
   const totalSpent = store.expenses.reduce((s, e) => s + e.amount, 0)
-  const remaining = variableBudget - totalSpent
-  const dailyAllowance = daysLeft > 0 ? remaining / daysLeft : 0
+  const totalRemaining = totalVariable - totalSpent
 
+  // Today
   const todayExpenses = store.expenses.filter((e) => e.date === today)
   const todaySpent = todayExpenses.reduce((s, e) => s + e.amount, 0)
 
-  const overBudget = todaySpent > dailyAllowance
-  const dangerZone = remaining < 500
+  const overBudget = todaySpent > currentDailyAllowance
+  const dangerZone = currentMonthRemaining < 300
 
   // Weekly chart
   const last7Days = useMemo(() => {
@@ -65,17 +79,17 @@ export default function Home() {
     })
   }, [store.expenses])
 
-  const maxDaySpent = Math.max(...last7Days.map((d) => d.spent), dailyAllowance, 1)
+  const maxDaySpent = Math.max(...last7Days.map((d) => d.spent), currentDailyAllowance, 1)
 
-  // Category breakdown
+  // Category breakdown (current month)
   const spentByCategory = useMemo(() => {
     return CATEGORIES.map((c) => ({
       ...c,
-      total: store.expenses.filter((e) => e.category === c.id).reduce((s, e) => s + e.amount, 0),
+      total: currentMonthExpenses.filter((e) => e.category === c.id).reduce((s, e) => s + e.amount, 0),
     })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total)
-  }, [store.expenses])
+  }, [currentMonthExpenses])
 
-  // Monthly summary
+  // Monthly summary (all time)
   const monthlyBreakdown = useMemo(() => {
     const months: Record<string, { spent: number; count: number }> = {}
     store.expenses.forEach((e) => {
@@ -123,84 +137,84 @@ export default function Home() {
   }
 
   return (
-    <main className="max-w-md mx-auto px-4 py-6 pb-20 min-h-screen">
+    <main className="max-w-lg mx-auto px-5 py-8 pb-24 min-h-screen">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-lg font-semibold">Alex&apos;s Budget Tracker</h1>
-          <p className="text-xs text-muted-foreground font-mono">Apr 25</p>
+          <h1 className="text-2xl font-semibold">Alex&apos;s Budget Tracker</h1>
+          <p className="text-sm text-muted-foreground font-mono mt-1">Apr 25</p>
         </div>
         <ThemeToggle />
       </div>
 
-      {/* Balance card */}
-      <Card className={`mb-4 ${dangerZone ? "border-destructive/30" : ""}`}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-normal text-muted-foreground">Remaining budget</CardTitle>
-          <p className={`text-3xl font-mono font-bold ${dangerZone ? "text-destructive" : "text-primary"}`}>
-            {formatRM(remaining)}
+      {/* Balance card - current month focus */}
+      <Card className={`mb-5 ${dangerZone ? "border-destructive/30" : ""}`}>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-normal text-muted-foreground">{currentMonthLabel} remaining</CardTitle>
+          <p className={`text-5xl font-mono font-bold tracking-tight ${dangerZone ? "text-destructive" : "text-primary"}`}>
+            {formatRM(currentMonthRemaining)}
           </p>
-          <p className="text-xs text-muted-foreground">
-            of {formatRM(variableBudget)} &middot; spent {formatRM(totalSpent)}
+          <p className="text-sm text-muted-foreground mt-1">
+            of {formatRM(currentMonthBudget)} &middot; spent {formatRM(currentMonthSpent)}
           </p>
         </CardHeader>
         <CardContent>
           <Progress
-            value={Math.min(100, (totalSpent / variableBudget) * 100)}
-            className="h-1.5"
+            value={Math.min(100, currentMonthBudget > 0 ? (currentMonthSpent / currentMonthBudget) * 100 : 0)}
+            className="h-2"
             indicatorClassName={dangerZone ? "bg-destructive" : "bg-primary"}
           />
-          <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-            <span className="font-mono">{formatRM(dailyAllowance)}/day</span>
-            <span>{((totalSpent / variableBudget) * 100).toFixed(0)}% used</span>
+          <div className="flex justify-between mt-3 text-sm text-muted-foreground">
+            <span className="font-mono">{formatRM(currentDailyAllowance)}/day</span>
+            <span>{currentMonthBudget > 0 ? ((currentMonthSpent / currentMonthBudget) * 100).toFixed(0) : 0}% used</span>
           </div>
         </CardContent>
       </Card>
 
       {/* Allocation cards */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground mb-1">March left</p>
-          <p className="font-mono font-semibold">{formatRM(marchBudget)}</p>
-          <p className="text-xs text-muted-foreground">{daysInMarch} days</p>
+      <div className="grid grid-cols-2 gap-4 mb-5">
+        <Card className={`p-5 ${isMarch ? "border-primary/30 bg-primary/5" : ""}`}>
+          <p className="text-sm text-muted-foreground mb-1">March</p>
+          <p className="font-mono font-bold text-xl">{formatRM(marchBudget)}</p>
+          <p className="text-sm text-muted-foreground mt-1">{daysLeftMarch} days left</p>
         </Card>
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground mb-1">April budget</p>
-          <p className="font-mono font-semibold">{formatRM(aprilAllocation)}</p>
-          <p className="text-xs text-muted-foreground">{daysInApril} days</p>
+        <Card className={`p-5 ${!isMarch ? "border-primary/30 bg-primary/5" : ""}`}>
+          <p className="text-sm text-muted-foreground mb-1">April</p>
+          <p className="font-mono font-bold text-xl">{formatRM(aprilBudget)}</p>
+          <p className="text-sm text-muted-foreground mt-1">{daysInApril} days</p>
         </Card>
       </div>
 
       {/* Today card - green filled */}
-      <Card className={`mb-4 ${overBudget ? "bg-destructive text-destructive-foreground border-destructive" : "bg-primary text-primary-foreground border-primary"}`}>
-        <div className="p-5 flex items-center justify-between">
+      <Card className={`mb-5 ${overBudget ? "bg-destructive text-destructive-foreground border-destructive" : "bg-primary text-primary-foreground border-primary"}`}>
+        <div className="p-6 flex items-center justify-between">
           <div>
-            <p className="text-xs opacity-80">Today</p>
-            <p className="text-2xl font-mono font-bold mt-1">{formatRM(todaySpent)}</p>
+            <p className="text-sm opacity-80">Today</p>
+            <p className="text-4xl font-mono font-bold mt-1">{formatRM(todaySpent)}</p>
           </div>
           <div className="text-right">
-            <p className="text-xs opacity-80">budget</p>
-            <p className="text-lg font-mono opacity-90">{formatRM(dailyAllowance)}</p>
+            <p className="text-sm opacity-80">budget</p>
+            <p className="text-2xl font-mono opacity-90">{formatRM(currentDailyAllowance)}</p>
           </div>
         </div>
-        <div className="px-5 pb-4">
-          <div className="h-1 rounded-full bg-white/20">
+        <div className="px-6 pb-5">
+          <div className="h-1.5 rounded-full bg-white/20">
             <div
               className="h-full rounded-full bg-white/80 transition-all"
-              style={{ width: `${Math.min(100, dailyAllowance > 0 ? (todaySpent / dailyAllowance) * 100 : 0)}%` }}
+              style={{ width: `${Math.min(100, currentDailyAllowance > 0 ? (todaySpent / currentDailyAllowance) * 100 : 0)}%` }}
             />
           </div>
         </div>
       </Card>
 
       {/* Quick add */}
-      <Card className="mb-4 p-4">
-        <div className="flex gap-1.5 mb-3 flex-wrap">
+      <Card className="mb-5 p-5">
+        <div className="flex gap-2 mb-4 flex-wrap">
           {CATEGORIES.map((c) => (
             <button
               key={c.id}
               onClick={() => setCategory(c.id)}
-              className={`text-xs px-2.5 py-1.5 rounded-full transition-colors ${
+              className={`text-sm px-3 py-2 rounded-full transition-colors ${
                 category === c.id
                   ? "bg-primary text-primary-foreground"
                   : "bg-secondary text-secondary-foreground hover:bg-accent"
@@ -217,64 +231,64 @@ export default function Home() {
             placeholder="RM"
             type="number"
             step="0.10"
-            className="w-20 px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-24 px-4 py-3 rounded-lg border border-input bg-background text-base font-mono focus:outline-none focus:ring-1 focus:ring-ring"
             onKeyDown={(e) => e.key === "Enter" && addExpense()}
           />
           <input
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             placeholder="What for?"
-            className="flex-1 px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-base focus:outline-none focus:ring-1 focus:ring-ring"
             onKeyDown={(e) => e.key === "Enter" && addExpense()}
           />
-          <Button size="default" onClick={addExpense} className="shrink-0">
-            <Plus className="w-4 h-4" />
+          <Button size="lg" onClick={addExpense} className="shrink-0 h-12 w-12">
+            <Plus className="w-5 h-5" />
           </Button>
         </div>
         <Button
           variant="ghost"
-          size="sm"
-          className="w-full mt-2 text-xs text-muted-foreground"
+          size="default"
+          className="w-full mt-3 text-sm text-muted-foreground"
           onClick={() => setScanOpen(true)}
         >
-          <FileUp className="w-3.5 h-3.5 mr-1.5" />
+          <FileUp className="w-4 h-4 mr-2" />
           Scan bank statement (PDF)
         </Button>
       </Card>
 
       {/* Tabs */}
       <Tabs defaultValue="today">
-        <TabsList>
-          <TabsTrigger value="today">Today</TabsTrigger>
-          <TabsTrigger value="week">Week</TabsTrigger>
-          <TabsTrigger value="bills">Bills</TabsTrigger>
-          <TabsTrigger value="summary">Summary</TabsTrigger>
+        <TabsList className="h-12">
+          <TabsTrigger value="today" className="text-sm">Today</TabsTrigger>
+          <TabsTrigger value="week" className="text-sm">Week</TabsTrigger>
+          <TabsTrigger value="bills" className="text-sm">Bills</TabsTrigger>
+          <TabsTrigger value="summary" className="text-sm">Summary</TabsTrigger>
         </TabsList>
 
         {/* Today tab */}
         <TabsContent value="today">
           {todayExpenses.length === 0 ? (
-            <p className="text-center py-10 text-sm text-muted-foreground">No spending yet today</p>
+            <p className="text-center py-14 text-base text-muted-foreground">No spending yet today</p>
           ) : (
             <div className="space-y-1">
               {todayExpenses.map((e) => {
                 const cat = getCategoryById(e.category)
                 return (
-                  <div key={e.id} className="flex items-center justify-between py-2.5 group">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-lg">{cat.emoji}</span>
+                  <div key={e.id} className="flex items-center justify-between py-3.5 group">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{cat.emoji}</span>
                       <div>
-                        <p className="text-sm">{e.desc}</p>
-                        <p className="text-xs text-muted-foreground">{cat.label}</p>
+                        <p className="text-base">{e.desc}</p>
+                        <p className="text-sm text-muted-foreground">{cat.label}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm">{formatRM(e.amount)}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-base">{formatRM(e.amount)}</span>
                       <button
                         onClick={() => store.deleteExpense(e.id)}
                         className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -286,23 +300,23 @@ export default function Home() {
 
         {/* Week tab */}
         <TabsContent value="week">
-          <div className="flex gap-1.5 items-end h-28 mb-4">
+          <div className="flex gap-2 items-end h-36 mb-5">
             {last7Days.map((d) => {
               const h = (d.spent / maxDaySpent) * 100
               const isToday = d.date === today
-              const over = d.spent > dailyAllowance
+              const over = d.spent > currentDailyAllowance
               return (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-mono text-muted-foreground">
+                <div key={d.date} className="flex-1 flex flex-col items-center gap-1.5">
+                  <span className="text-xs font-mono text-muted-foreground">
                     {d.spent > 0 ? Math.round(d.spent) : ""}
                   </span>
                   <div
-                    className={`w-full rounded-md transition-all ${
+                    className={`w-full rounded-lg transition-all ${
                       over ? "bg-destructive" : isToday ? "bg-primary" : "bg-secondary"
                     }`}
-                    style={{ height: `${Math.max(h, 3)}%`, minHeight: 2 }}
+                    style={{ height: `${Math.max(h, 3)}%`, minHeight: 4 }}
                   />
-                  <span className={`text-[11px] ${isToday ? "font-semibold" : "text-muted-foreground"}`}>
+                  <span className={`text-sm ${isToday ? "font-semibold" : "text-muted-foreground"}`}>
                     {d.label}
                   </span>
                 </div>
@@ -311,14 +325,14 @@ export default function Home() {
           </div>
           {spentByCategory.length > 0 && (
             <>
-              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">By category</p>
+              <p className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">By category ({currentMonthLabel})</p>
               {spentByCategory.map((c) => (
-                <div key={c.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span>{c.emoji}</span>
-                    <span className="text-sm">{c.label}</span>
+                <div key={c.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{c.emoji}</span>
+                    <span className="text-base">{c.label}</span>
                   </div>
-                  <span className="font-mono text-sm" style={{ color: c.color }}>{formatRM(c.total)}</span>
+                  <span className="font-mono text-base" style={{ color: c.color }}>{formatRM(c.total)}</span>
                 </div>
               ))}
             </>
@@ -327,64 +341,64 @@ export default function Home() {
 
         {/* Bills tab */}
         <TabsContent value="bills">
-          <p className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wide">
+          <p className="text-sm font-medium text-muted-foreground mb-4 uppercase tracking-wide">
             Fixed bills &middot; {formatRM(totalFixed)}
           </p>
           {BUDGET_CONFIG.fixedBills.map((b) => (
             <div
               key={b.name}
               onClick={() => store.toggleBill(b.name)}
-              className={`flex items-center justify-between py-3 border-b border-border last:border-0 cursor-pointer transition-opacity ${
+              className={`flex items-center justify-between py-4 border-b border-border last:border-0 cursor-pointer transition-opacity ${
                 store.billsPaid[b.name] ? "opacity-40" : ""
               }`}
             >
-              <div className="flex items-center gap-3">
-                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${
+              <div className="flex items-center gap-4">
+                <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${
                   store.billsPaid[b.name] ? "border-primary bg-primary" : "border-border"
                 }`}>
-                  {store.billsPaid[b.name] && <Check className="w-3 h-3 text-primary-foreground" />}
+                  {store.billsPaid[b.name] && <Check className="w-4 h-4 text-primary-foreground" />}
                 </div>
                 <div>
-                  <p className={`text-sm ${store.billsPaid[b.name] ? "line-through" : ""}`}>{b.name}</p>
-                  <p className="text-xs text-muted-foreground">{b.due}</p>
+                  <p className={`text-base ${store.billsPaid[b.name] ? "line-through" : ""}`}>{b.name}</p>
+                  <p className="text-sm text-muted-foreground">{b.due}</p>
                 </div>
               </div>
-              <span className="font-mono text-sm">{formatRM(b.amount)}</span>
+              <span className="font-mono text-base">{formatRM(b.amount)}</span>
             </div>
           ))}
 
-          <p className="text-xs font-medium text-muted-foreground mt-6 mb-3 uppercase tracking-wide">Incoming</p>
+          <p className="text-sm font-medium text-muted-foreground mt-8 mb-4 uppercase tracking-wide">Incoming</p>
           {store.income.map((i) => (
-            <div key={i.id} className="flex justify-between py-2 border-b border-border last:border-0">
+            <div key={i.id} className="flex justify-between py-3 border-b border-border last:border-0">
               <div>
-                <p className="text-sm">{i.desc}</p>
-                <p className="text-xs text-muted-foreground">{formatDate(i.date)}</p>
+                <p className="text-base">{i.desc}</p>
+                <p className="text-sm text-muted-foreground">{formatDate(i.date)}</p>
               </div>
-              <span className="font-mono text-sm text-primary">+{formatRM(i.amount)}</span>
+              <span className="font-mono text-base text-primary">+{formatRM(i.amount)}</span>
             </div>
           ))}
           {showAddIncome ? (
-            <div className="flex gap-2 mt-2">
+            <div className="flex gap-2 mt-3">
               <input
                 value={incomeAmount}
                 onChange={(e) => setIncomeAmount(e.target.value)}
                 placeholder="RM"
                 type="number"
-                className="w-20 px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                className="w-24 px-4 py-3 rounded-lg border border-input bg-background text-base font-mono focus:outline-none focus:ring-1 focus:ring-ring"
               />
               <input
                 value={incomeDesc}
                 onChange={(e) => setIncomeDesc(e.target.value)}
                 placeholder="e.g. Fly payout"
-                className="flex-1 px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-base focus:outline-none focus:ring-1 focus:ring-ring"
               />
-              <Button size="default" onClick={addInc} className="shrink-0">
-                <Plus className="w-4 h-4" />
+              <Button size="lg" onClick={addInc} className="shrink-0 h-12 w-12">
+                <Plus className="w-5 h-5" />
               </Button>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="w-full mt-2 text-xs" onClick={() => setShowAddIncome(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
+            <Button variant="outline" size="default" className="w-full mt-3 text-sm" onClick={() => setShowAddIncome(true)}>
+              <Plus className="w-4 h-4 mr-2" />
               Add incoming money
             </Button>
           )}
@@ -392,49 +406,65 @@ export default function Home() {
 
         {/* Summary tab */}
         <TabsContent value="summary">
-          <div className="space-y-4">
-            <Card className="p-4">
-              <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide font-medium">Budget allocation</p>
-              <div className="space-y-3">
-                <div className="flex justify-between text-sm">
+          <div className="space-y-5">
+            <Card className="p-5">
+              <p className="text-sm text-muted-foreground mb-4 uppercase tracking-wide font-medium">Budget allocation</p>
+              <div className="space-y-4">
+                <div className="flex justify-between text-base">
                   <span>Total savings</span>
                   <span className="font-mono">{formatRM(BUDGET_CONFIG.totalSavings)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-base">
                   <span>Spending cash</span>
                   <span className="font-mono">{formatRM(BUDGET_CONFIG.spendingCash)}</span>
                 </div>
                 {totalIncome > 0 && (
-                  <div className="flex justify-between text-sm">
+                  <div className="flex justify-between text-base">
                     <span>Additional income</span>
                     <span className="font-mono text-primary">+{formatRM(totalIncome)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-base">
                   <span>Fixed bills</span>
                   <span className="font-mono text-destructive">-{formatRM(totalFixed)}</span>
                 </div>
-                <div className="border-t border-border pt-2 flex justify-between text-sm font-medium">
+                <div className="border-t border-border pt-3 flex justify-between text-base font-semibold">
                   <span>Variable budget</span>
-                  <span className="font-mono">{formatRM(variableBudget)}</span>
+                  <span className="font-mono">{formatRM(totalVariable)}</span>
                 </div>
               </div>
             </Card>
 
-            <Card className="p-4">
-              <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide font-medium">Recommended daily</p>
-              <p className="text-2xl font-mono font-bold text-primary">{formatRM(dailyAllowance)}</p>
-              <p className="text-xs text-muted-foreground mt-1">{daysLeft} days remaining to Apr 25</p>
+            <Card className="p-5">
+              <p className="text-sm text-muted-foreground mb-4 uppercase tracking-wide font-medium">Recommended daily</p>
+              <p className="text-4xl font-mono font-bold text-primary">{formatRM(currentDailyAllowance)}</p>
+              <p className="text-sm text-muted-foreground mt-2">{currentMonthDays} days left in {currentMonthLabel}</p>
+            </Card>
+
+            <Card className="p-5">
+              <p className="text-sm text-muted-foreground mb-4 uppercase tracking-wide font-medium">Overall</p>
+              <div className="flex justify-between text-base">
+                <span>Total remaining</span>
+                <span className="font-mono font-semibold">{formatRM(totalRemaining)}</span>
+              </div>
+              <div className="flex justify-between text-base mt-2">
+                <span>Total spent</span>
+                <span className="font-mono">{formatRM(totalSpent)}</span>
+              </div>
+              <div className="flex justify-between text-base mt-2">
+                <span>Daily rate (all)</span>
+                <span className="font-mono">{formatRM(dailyRate)}</span>
+              </div>
             </Card>
 
             {monthlyBreakdown.length > 0 && (
-              <Card className="p-4">
-                <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide font-medium">Monthly totals</p>
+              <Card className="p-5">
+                <p className="text-sm text-muted-foreground mb-4 uppercase tracking-wide font-medium">Monthly totals</p>
                 {monthlyBreakdown.map(([month, data]) => (
-                  <div key={month} className="flex justify-between py-2 border-b border-border last:border-0 text-sm">
+                  <div key={month} className="flex justify-between py-3 border-b border-border last:border-0 text-base">
                     <div>
                       <span>{new Date(month + "-01").toLocaleDateString("en-MY", { month: "long", year: "numeric" })}</span>
-                      <span className="text-xs text-muted-foreground ml-2">({data.count} txns)</span>
+                      <span className="text-sm text-muted-foreground ml-2">({data.count} txns)</span>
                     </div>
                     <span className="font-mono">{formatRM(data.spent)}</span>
                   </div>
@@ -443,17 +473,17 @@ export default function Home() {
             )}
 
             {spentByCategory.length > 0 && (
-              <Card className="p-4">
-                <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide font-medium">Top categories</p>
+              <Card className="p-5">
+                <p className="text-sm text-muted-foreground mb-4 uppercase tracking-wide font-medium">Top categories ({currentMonthLabel})</p>
                 {spentByCategory.slice(0, 5).map((c) => {
-                  const pct = totalSpent > 0 ? (c.total / totalSpent) * 100 : 0
+                  const pct = currentMonthSpent > 0 ? (c.total / currentMonthSpent) * 100 : 0
                   return (
-                    <div key={c.id} className="mb-3 last:mb-0">
-                      <div className="flex justify-between text-sm mb-1">
+                    <div key={c.id} className="mb-4 last:mb-0">
+                      <div className="flex justify-between text-base mb-1.5">
                         <span>{c.emoji} {c.label}</span>
-                        <span className="font-mono">{formatRM(c.total)} <span className="text-xs text-muted-foreground">({pct.toFixed(0)}%)</span></span>
+                        <span className="font-mono">{formatRM(c.total)} <span className="text-sm text-muted-foreground">({pct.toFixed(0)}%)</span></span>
                       </div>
-                      <Progress value={pct} className="h-1" indicatorClassName="bg-primary" />
+                      <Progress value={pct} className="h-1.5" indicatorClassName="bg-primary" />
                     </div>
                   )
                 })}
